@@ -1,0 +1,418 @@
+#!/usr/bin/env python3
+import curses
+import time
+import logging
+from abc import abstractmethod
+import threading
+
+class synchronized_data:
+    def __init__(self, initial_data=None):
+        self._data = initial_data
+        self.lock = threading.Lock()
+
+    @property
+    def data(self):
+        with self.lock:
+            return self._data
+
+    @data.setter
+    def data(self, value):
+        with self.lock:
+            self._data = value
+
+class window_geometry:
+    def __init__(self, x, y, width, height):
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+
+class window_t:
+    class side_t:
+        left=1
+        right=2
+
+    def __init__(self, name, side):
+        self.side = side
+        self.window = None
+        self.name = name
+        self.requires_update = True
+        self.requires_clear = True
+        self.available_windows = []
+        self.selected_line = None
+        self.content_focus_line = None
+        self.geometry = None
+        self.content_update_thread = None
+        self.content = synchronized_data(None)
+        self.displayable_content = synchronized_data(None)
+        self.content_updated = synchronized_data(False)
+
+    def x(self): return self.geometry.x
+    def y(self): return self.geometry.y
+    def width(self): return self.geometry.width
+    def height(self): return self.geometry.height
+
+    def create_window(self, geometry):
+        self.geometry = geometry
+        self.window = curses.newwin(geometry.height, geometry.width, geometry.y, geometry.x)
+
+    def update_geometry(self, geometry):
+        self.geometry = geometry
+        if self.window is None: 
+            self.create_window(geometry)
+        else:
+            try:
+                self.window.resize(geometry.height, geometry.width)
+                self.window.mvwin(geometry.y, geometry.x)
+            except Exception as e:
+                logging.error(f"Error resizing window {self.name}: {e}")
+        self.requires_update = True
+        self.requires_clear = True
+
+    def set_selected(self, selected):
+        if selected:
+            self.window.bkgd(curses.color_pair(1))
+        else:
+            self.window.bkgd(curses.color_pair(2))
+        self.requires_update = True
+
+    def draw(self):
+        if self.window is None: return
+        if not self.requires_update: return
+        if self.requires_clear:
+            self.window.clear()
+            self.requires_clear = False
+
+        if isinstance(self.displayable_content.data, str):
+            self.displayable_content.data = [self.displayable_content.data]
+
+        if self.displayable_content.data:
+            for line in self.displayable_content.data:
+                for i, line in enumerate(self.displayable_content.data):
+                    if self.selected_line is not None and i == self.selected_line:
+                        self.window.addstr(i + 1, 1, line, curses.A_REVERSE)
+                    else:
+                        self.window.addstr(i + 1, 1, line)
+
+        self.window.border()
+        self.window.refresh()
+        self.requires_update = False
+
+    def set_window_content(self, text):
+        self.window.addstr(text)
+        self.requires_update = True
+
+    def set_available_windows(self, available):
+        self.available_windows = available
+
+    @abstractmethod
+    def update_content(self):
+        pass
+
+    @abstractmethod
+    def handle_input(self, key):
+        pass
+
+    @abstractmethod
+    def run(self):
+        pass
+
+class text_window_t(window_t):
+    def __init__(self, name, side):
+        super().__init__(name, side)
+
+    def update_content(self):
+        try:
+            self.displayable_content.data = self.content.data
+            self.draw()
+            self.requires_update = True
+            self.requires_clear = True
+        except Exception as e:
+            logging.error(f"Error updating content for window {self.name}: {e}")
+
+    def handle_input(self, key):
+        pass
+
+    def run(self):
+        self.update_content()
+        return None
+
+class list_window_t(window_t):
+    def __init__(self, name, side, update_callbacks):
+        super().__init__(name, side)
+        self.update_callbacks = update_callbacks
+
+    def update_content(self):
+        self.content.data = ["0"
+                             , "1"
+                             , "2"
+                             , "3"
+                             , "4"
+                             , "5"
+                             , "6"
+                             , "7"
+                             , "8"
+                             , "9"
+                             , "10"
+                             , "11"
+                             , "12"
+                             , "13"
+                             , "14asdfasdf1"
+                             , "15asdfasdf2"
+                             , "16asdfasdf3"
+                             , "17asdfasdf4"
+                             ]
+
+        if self.content.data is None: return
+        # Convert to displayable lines given text size
+        displayable_lines = self.height() - 2 
+        content_lines = len(self.content.data)
+        
+        if not self.selected_line:
+            self.selected_line = 0
+
+        if self.content_focus_line is None:
+            self.content_focus_line = displayable_lines // 2
+
+        upper_focus_line_limit = displayable_lines // 2
+        lower_focus_line_limit = content_lines - (displayable_lines // 2)
+
+        if self.selected_line < upper_focus_line_limit:
+            pass
+
+        if self.selected_line == -1:
+            if content_lines > displayable_lines:
+                self.selected_line = displayable_lines - 1
+            else:
+                self.selected_line = content_lines - 1
+            self.content_focus_line = lower_focus_line_limit
+
+        if self.selected_line == displayable_lines or self.selected_line == content_lines:
+            self.selected_line = 0
+            self.content_focus_line = upper_focus_line_limit
+
+        while self.selected_line > displayable_lines // 2 and self.content_focus_line < lower_focus_line_limit:
+            self.selected_line -= 1
+            if self.content_focus_line < content_lines:
+                self.content_focus_line += 1
+            else:
+                pass
+        
+        while self.selected_line < displayable_lines // 2 and self.content_focus_line > upper_focus_line_limit:
+            self.selected_line += 1
+            if self.content_focus_line > 0:
+                self.content_focus_line -= 1
+            else:
+                pass
+
+        if content_lines >= displayable_lines:
+            lower = self.content_focus_line - (displayable_lines // 2)
+            upper = self.content_focus_line + (displayable_lines // 2)
+            self.displayable_content.data = self.content.data[lower:upper]
+        elif content_lines < displayable_lines:
+            self.displayable_content.data = self.content.data
+        else:
+            pass
+        self.requires_update = True
+        self.requires_clear = True
+
+        for callback in self.update_callbacks:
+            for w in self.available_windows:
+                if w.name == callback.window_name:
+                    w.content.data = callback.run(self.get_selected_content())
+                    w.update_content()
+    
+
+    def get_selected_content(self):
+        if self.displayable_content.data is None: return
+        return self.displayable_content.data[self.selected_line]
+
+    def handle_input(self, key):
+        if self.displayable_content.data is None: return
+        lines = len(self.displayable_content.data)
+        if len(self.displayable_content.data) == 0: return
+        if self.selected_line is None: self.selected_line = 0
+        if key == curses.KEY_UP:
+            self.selected_line = (self.selected_line - 1) #% lines
+        elif key == curses.KEY_DOWN:
+            self.selected_line = (self.selected_line + 1) #% lines
+
+    def run(self):
+        self.update_content()
+        return None
+
+
+class session:
+    def __init__(self, stdscr):
+        self.height, self.width = stdscr.getmaxyx()
+        self.stdscr = stdscr
+        self.windows = {}
+        self.running = True
+        self.selected_window = None
+        self.start_time = time.time()
+
+        curses.start_color()
+        curses.init_pair(1, curses.COLOR_GREEN, curses.COLOR_BLACK)
+        curses.init_pair(2, curses.COLOR_WHITE, curses.COLOR_BLACK)
+
+    def add_window(self, window):
+        self.windows[window.name] = window
+        self.calculate_window_geometry()
+
+    def remove_window(self, name):
+        del self.windows[name]
+        self.calculate_window_geometry()
+
+    def calculate_window_geometry(self):
+        self.height, self.width = self.stdscr.getmaxyx()
+
+
+        num_left_windows = len([win for win in self.windows.values() if win.side == window_t.side_t.left])
+        num_right_windows = len([win for win in self.windows.values() if win.side == window_t.side_t.right])
+
+        right_start = self.width // 3
+        if num_left_windows == 0 and num_right_windows == 0: return
+        elif num_left_windows == 0:
+            right_width = self.width
+            right_start = 0
+        elif num_right_windows == 0:
+            left_width = self.width
+        else:
+            left_width = self.width // 3
+            right_width = (self.width // 3) * 2
+        logging.debug(f"Calculating window geometry for {num_left_windows} left windows and {num_right_windows} right windows")
+        right_height = self.height // num_right_windows if num_right_windows else 0
+        left_height = self.height // num_left_windows if num_left_windows else 0
+        left_start = 0
+
+        # loop over all windows and set their geometry
+        left_win = 0
+        right_win = 0
+        for i, win in enumerate(self.windows.values()):
+            if win.side == window_t.side_t.left:
+                win.update_geometry( window_geometry(left_start, left_win * left_height, left_width, left_height) )
+                left_win += 1
+            if win.side == window_t.side_t.right:
+                win.update_geometry( window_geometry(right_start, right_win * right_height, right_width, right_height) )
+                right_win += 1
+
+
+    def window_redraw_required(self):
+        redraw = False
+
+        new_height, new_width = self.stdscr.getmaxyx()
+        if new_height != self.height or new_width != self.width:
+            self.height = new_height
+            self.width = new_width
+            redraw = True
+
+        return redraw
+
+    def refresh_windows(self):
+        self.calculate_window_geometry()
+
+    def toggle_selected_window(self, key):
+        num_windows = len(self.windows)
+        if num_windows == 0: return
+
+        if not self.selected_window:
+            self.selected_window = self.windows[list(self.windows.keys())[0]]
+
+        # Find the next window after the selected window
+        window_list = list(self.windows.values())
+        selected_index = window_list.index(self.selected_window)
+        next_index = selected_index
+        if key == curses.KEY_LEFT:
+            next_index = (selected_index - 1) % num_windows
+        if key == curses.KEY_RIGHT:
+            next_index = (selected_index + 1) % num_windows
+
+        self.selected_window.set_selected(False)
+        self.selected_window = window_list[next_index]
+        self.selected_window.set_selected(True)
+
+    def handle_input(self, key):
+        if key in range(0, 256): strkey = chr(key);  logging.debug(f"Handling input: {key} as {strkey}")
+        elif(key == -1): pass  
+        else:  logging.debug(f"Handling input: {key}")
+        self.toggle_selected_window(key)
+
+    def run_window(self, key, window):
+        # Let the window know what other windows are available
+        available = [win for win in self.windows.values() if win != window]
+        window.set_available_windows(available)
+        window.handle_input(key)
+        content = window.run()
+        if content:
+            window.set_window_content(content)
+
+    def draw(self):
+        if self.window_redraw_required():
+            self.stdscr.clear()
+            self.refresh_windows()
+
+        for i, win in enumerate(self.windows.values()):
+            win.requires_update = True
+            win.draw()
+        self.stdscr.refresh()
+
+    def run(self):
+        startup_time = time.time()
+        while self.running:
+            self.stdscr.refresh()
+            try:
+                self.draw()
+                key = self.stdscr.getch()
+                self.handle_input(key)
+                self.run_window( key, self.selected_window )
+
+            except KeyboardInterrupt:
+                self.running = False
+
+
+class callback:
+    def __init__(self, window_name):
+        self.window_name = window_name
+
+    def run(self, data):
+        return data
+
+def help():
+    help_text = """"""
+
+
+def main(stdscr):
+    stdscr.timeout(200)
+    curses.curs_set(0)
+    curses.noecho()
+    curses.cbreak()
+    logging.basicConfig(filename='gui.log', level=logging.DEBUG)
+    # SELECTED = curses.color_pair(1)
+    # UNSELECTED = curses.color_pair(2)
+
+    app = session(stdscr)
+    
+    app.add_window( list_window_t("left1", window_t.side_t.left, [callback("right1")] ) )
+    app.add_window( list_window_t("left2", window_t.side_t.left, [callback("right2")] ) )
+    app.add_window( list_window_t("left3", window_t.side_t.left, [callback("right3")] ) )
+    app.add_window( list_window_t("left4", window_t.side_t.left, [callback("right4")] ) )
+    app.add_window( text_window_t("right1", window_t.side_t.right) )
+    app.add_window( text_window_t("right2", window_t.side_t.right) )
+    app.add_window( text_window_t("right3", window_t.side_t.right) )
+    app.add_window( text_window_t("right4", window_t.side_t.right) )
+    # app.add_window( text_window_t("right5", window_t.side_t.right) )
+    # app.add_window( text_window_t("right6", window_t.side_t.right) )
+    # app.add_window( text_window_t("right7", window_t.side_t.right) )
+    # app.add_window( text_window_t("right8", window_t.side_t.right) )
+    # app.add_window( text_window_t("right9", window_t.side_t.right) )
+    app.run()
+
+    curses.nocbreak()
+    curses.echo()
+    curses.endwin()
+
+if __name__ == "__main__":
+    try:
+        curses.wrapper(main)
+    except Exception as e:
+        print("An error occurred:", e)
