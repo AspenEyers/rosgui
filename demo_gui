@@ -1,0 +1,38 @@
+#!/usr/bin/env python3
+
+import curses
+from gui.session import Window, TextWindow, ListWindow, Session
+
+class Callback:
+    """ A simple callback class that returns the data it receives."""
+    def __init__(self, window_name):
+        self.window_name = window_name
+
+    def run(self, data):
+        """ Returned data is used to update the callback's window."""
+        return data
+
+def main(stdscr):
+    """ An example application that creates a session with 4 list windows and 9 text windows. 
+    Shows off the basic functionality of the gui module."""
+    app = Session(stdscr)
+    app.add_window( ListWindow("LEFT1", Window.Side.LEFT, [Callback("RIGHT1")] ) )
+    app.add_window( ListWindow("LEFT2", Window.Side.LEFT, [Callback("RIGHT2")] ) )
+    app.add_window( ListWindow("LEFT3", Window.Side.LEFT, [Callback("RIGHT3")] ) )
+    app.add_window( ListWindow("LEFT4", Window.Side.LEFT, [Callback("RIGHT4")] ) )
+    app.add_window( TextWindow("RIGHT1", Window.Side.RIGHT) )
+    app.add_window( TextWindow("RIGHT2", Window.Side.RIGHT) )
+    app.add_window( TextWindow("RIGHT3", Window.Side.RIGHT) )
+    app.add_window( TextWindow("RIGHT4", Window.Side.RIGHT) )
+    app.add_window( TextWindow("RIGHT5", Window.Side.RIGHT) )
+    app.add_window( TextWindow("RIGHT6", Window.Side.RIGHT) )
+    app.add_window( TextWindow("RIGHT7", Window.Side.RIGHT) )
+    app.add_window( TextWindow("RIGHT8", Window.Side.RIGHT) )
+    app.add_window( TextWindow("RIGHT9", Window.Side.RIGHT) )
+    app.run()
+
+if __name__ == "__main__":
+    try:
+        curses.wrapper(main)
+    except Exception as e:
+        print("An error occurred:", e)
