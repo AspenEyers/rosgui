@@ -4,7 +4,7 @@ import curses
 import threading
 import logging
 from gui.session import Window, TextWindow, ListWindow, Session
-from ros2.monitor import Ros2Monitor
+from ros2.monitor import Ros2Monitor, TopicSubscriber
 
 logger = logging.getLogger('app')
 ros = Ros2Monitor()
@@ -25,7 +25,10 @@ class RosTopicListWindow(ListWindow):
 
     def handle_input(self, key):
         super().handle_input(key)
-        """ TODO: Implement e key to show topic echo"""
+        # when e is pressed, start the rostopic subscriber thread and display the output in the output window
+        if key == ord('e'):
+            logger.info("Starting topic subscriber")
+            self.update_callbacks[0].cycle_mode()
 
     class Callback:
         """ A Callback that returns the data it receives 
@@ -34,21 +37,49 @@ class RosTopicListWindow(ListWindow):
             self.window_name = window_name
             self.input = None
             self.output_content = None
+            self.info_thread = None
+            self.topic_thread = None
+            self.mode = "topic_info"
+            self.topic_subscriber = TopicSubscriber()
+            threading.Thread( target=self.topic_subscriber.spin ).start()
 
         def __del__(self):
             logger.info("Deleting Callback")
 
-        def get_topic_content_async(self):
+        def get_topic_info_async(self):
             """ Asynchronous function to get the content of a topic. """
             if self.output_content is None:
                 self.output_content = " "
             if self.input is not None:
                 self.output_content = ros.get_topic_info(self.input)
+        
+        def get_topic_content_async(self):
+            """ Synchronous function to get the content of a topic. """
+            if self.output_content is None:
+                self.output_content = " "
+            if self.input is not None:
+                logger.info("Creating dynamic subscriber")
+                self.topic_subscriber.create_dynamic_subscriber(self.input)
+                self.output_content = self.topic_subscriber.buffer_as_string()
+                logger.info("Creating dynamic subscriber done")
+
+        def cycle_mode(self):
+            """ Cycle between topic info and topic echo."""
+            if self.mode == "topic_info":
+                self.mode = "topic_echo"
+            else:
+                self.mode = "topic_info"
 
         def run(self, input_line):
             """ Return topic info to the output window."""
             self.input = input_line
-            threading.Thread( target=self.get_topic_content_async ).start()
+            
+            if self.mode == "topic_info":
+                threading.Thread( target=self.get_topic_info_async ).start()
+                self.topic_subscriber.end_subscription()
+            if self.mode == "topic_echo":
+                logger.info("Running topic echo")
+                threading.Thread( target=self.get_topic_content_async ).start()
 
             if self.output_content is not None:
                 return self.output_content
@@ -168,7 +199,10 @@ def main(stdscr):
     Updates will only occur when the user has the window in focus.
     When in focus, only the selected line will call updates.
     """
+    logging.basicConfig(filename='agent_controller.log', level=logging.DEBUG)
+    logger.info("Starting application")
     app = Session(stdscr)
+
     app.add_window(
         RosTopicListWindow("RosTopicListWindow"
                           , Window.Side.LEFT
@@ -196,6 +230,8 @@ def main(stdscr):
     app.run()
 
 if __name__ == "__main__":
+    logging.basicConfig(filename='asdf.log', level=logging.DEBUG)
+    logger.info("Starting application")
     try:
         curses.wrapper(main)
     except Exception as e:
