@@ -18,10 +18,10 @@ This repository has building blocks for rapidly mocking up a command line GUI.
 As much as possible, the tools for rapidly creating your own gui have been exposed.
 See demo_gui for some ideas on how to use this for your own content. 
 
-# Install 
+# Install - Currently broken!!! 
 ```
-git clone https://github.com/AspenEyers/rosgui.git
-cd rosgui
-pip install .
+~~git clone https://github.com/AspenEyers/rosgui.git~~
+~~cd rosgui~~
+~~pip install .~~
 ```
 
